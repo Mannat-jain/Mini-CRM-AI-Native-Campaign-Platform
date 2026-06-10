@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: xeno-crm-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CHANNEL_SERVICE_URL
+        sync: false
+      - key: CRM_RECEIPT_URL
+        sync: false
+
+  - type: web
+    name: xeno-channel-service
+    env: python
+    rootDir: channel-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: CRM_RECEIPT_URL
+        sync: false
+
+  - type: web
+    name: xeno-crm-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: build
+    envVars:
+      - key: REACT_APP_API_URL
+        sync: false

@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./xeno_crm.db
+      - CHANNEL_SERVICE_URL=http://channel-service:8001
+      - CRM_RECEIPT_URL=http://backend:8000/api/receipts/callback
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - channel-service
+
+  channel-service:
+    build: ./channel-service
+    ports:
+      - "8001:8001"
+    environment:
+      - CRM_RECEIPT_URL=http://backend:8000/api/receipts/callback
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - backend
