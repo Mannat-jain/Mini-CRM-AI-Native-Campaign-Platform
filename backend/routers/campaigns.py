@@ -136,6 +136,10 @@ def delete_campaign(campaign_id: str, db: Session = Depends(get_db)):
     campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
     if not campaign:
         raise HTTPException(404, "Not found")
+    
+    # Delete associated communications first to bypass FK constraints
+    db.query(Communication).filter(Communication.campaign_id == campaign_id).delete()
+    
     db.delete(campaign)
     db.commit()
     return {"message": "Deleted"}
