@@ -82,14 +82,14 @@ export default function Insights() {
   };
 
   // 1. Stat Cards Metrics
-  const totalSent = overview?.total_communications || 12480;
-  const delivered = overview?.delivered || 11204;
-  const opened = overview?.opened || 4931;
-  const clicked = overview?.clicked || 1872;
+  const totalSent = overview?.total_communications ?? 0;
+  const delivered = overview?.delivered ?? 0;
+  const opened = overview?.opened ?? 0;
+  const clicked = overview?.clicked ?? 0;
 
-  const deliveryRate = overview?.total_communications ? overview.delivery_rate : 90;
-  const openRate = overview?.delivered ? overview.open_rate : 41;
-  const clickRate = overview?.opened ? overview.click_rate : 15;
+  const deliveryRate = overview?.total_communications ? overview.delivery_rate : 0;
+  const openRate = overview?.delivered ? overview.open_rate : 0;
+  const clickRate = overview?.opened ? overview.click_rate : 0;
 
   // 2. Sent by Channel progress bars data
   const getChannelStats = () => {
@@ -103,37 +103,26 @@ export default function Insights() {
       });
     }
 
-    const hasData = Object.values(channelTotals).some(v => v > 0);
-    if (hasData) {
-      return [
-        { label: 'WhatsApp', value: channelTotals.whatsapp, color: 'var(--accent)' },
-        { label: 'Email', value: channelTotals.email, color: 'var(--yellow)' },
-        { label: 'SMS', value: channelTotals.sms, color: 'var(--green)' },
-        { label: 'RCS', value: channelTotals.rcs, color: 'var(--blue)' }
-      ];
-    }
-
-    // Default mock data (from screen)
     return [
-      { label: 'WhatsApp', value: 6240, color: 'var(--accent)' },
-      { label: 'Email', value: 3120, color: 'var(--yellow)' },
-      { label: 'SMS', value: 2200, color: 'var(--green)' },
-      { label: 'RCS', value: 920, color: 'var(--blue)' }
+      { label: 'WhatsApp', value: channelTotals.whatsapp, color: 'var(--accent)' },
+      { label: 'Email', value: channelTotals.email, color: 'var(--yellow)' },
+      { label: 'SMS', value: channelTotals.sms, color: 'var(--green)' },
+      { label: 'RCS', value: channelTotals.rcs, color: 'var(--blue)' }
     ];
   };
 
   const channelStats = getChannelStats();
   const maxChannelVal = Math.max(1, ...channelStats.map(c => c.value));
 
-  // 3. Activity (last 7 days) mock data
-  const activityData = [
-    { day: 'Mon', val: 35, active: false },
-    { day: 'Tue', val: 45, active: false },
-    { day: 'Wed', val: 40, active: false },
-    { day: 'Thu', val: 55, active: false },
-    { day: 'Fri', val: 75, active: true },
-    { day: 'Sat', val: 30, active: false },
-    { day: 'Sun', val: 25, active: false }
+  // 3. Activity (last 7 days) data
+  const activityData = overview?.daily_activity || [
+    { day: 'Mon', val: 0, active: false },
+    { day: 'Tue', val: 0, active: false },
+    { day: 'Wed', val: 0, active: false },
+    { day: 'Thu', val: 0, active: false },
+    { day: 'Fri', val: 0, active: false },
+    { day: 'Sat', val: 0, active: false },
+    { day: 'Sun', val: 0, active: false }
   ];
 
   // 4. Communication Log list
@@ -160,7 +149,7 @@ export default function Insights() {
         };
       });
     }
-    return mockComms;
+    return [];
   };
 
   const logData = getLogData();
@@ -355,7 +344,7 @@ export default function Insights() {
                 {filteredLogs.length === 0 && (
                   <tr>
                     <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
-                      No communications match your search
+                      {searchQuery ? "No communications match your search" : "No communication log events found"}
                     </td>
                   </tr>
                 )}

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from database import get_db
 from models import Campaign, Communication, Customer, Order, Segment
+from datetime import datetime, timedelta
 
 router = APIRouter()
 
@@ -25,6 +26,31 @@ def overview(db: Session = Depends(get_db)):
     total_customers = db.query(func.count(Customer.id)).scalar()
     total_revenue = db.query(func.sum(Order.amount)).scalar() or 0
     
+    # Calculate last 7 days daily activity
+    daily_activity = []
+    today = datetime.utcnow().date()
+    for i in range(6, -1, -1):
+        day_date = today - timedelta(days=i)
+        day_name = day_date.strftime("%a")
+        start_dt = datetime.combine(day_date, datetime.min.time())
+        end_dt = datetime.combine(day_date, datetime.max.time())
+        count = db.query(func.count(Communication.id)).filter(
+            Communication.updated_at >= start_dt,
+            Communication.updated_at <= end_dt
+        ).scalar() or 0
+        daily_activity.append({
+            "day": day_name,
+            "val": count,
+            "active": False
+        })
+        
+    max_val = max([d["val"] for d in daily_activity]) if daily_activity else 0
+    if max_val > 0:
+        for d in daily_activity:
+            if d["val"] == max_val:
+                d["active"] = True
+                break
+    
     return {
         "total_campaigns": total_campaigns,
         "sent_campaigns": sent_campaigns,
@@ -37,8 +63,10 @@ def overview(db: Session = Depends(get_db)):
         "open_rate": round(opened / delivered * 100, 1) if delivered else 0,
         "click_rate": round(clicked / opened * 100, 1) if opened else 0,
         "total_customers": total_customers,
-        "total_revenue": round(total_revenue, 2)
+        "total_revenue": round(total_revenue, 2),
+        "daily_activity": daily_activity
     }
+
 
 @router.get("/campaigns/performance")
 def campaign_performance(db: Session = Depends(get_db)):
