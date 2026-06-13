@@ -267,20 +267,26 @@ export default function Insights() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '110px', padding: '0 10px', flex: 1 }}>
-              {activityData.map(d => (
-                <div key={d.day} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, height: '100%' }}>
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'flex-end', width: '28px', marginBottom: '8px' }}>
-                    <div style={{
-                      width: '100%',
-                      height: `${d.val}%`,
-                      background: d.active ? 'var(--accent)' : 'rgba(124, 92, 252, 0.15)',
-                      borderRadius: '6px',
-                      transition: 'all 0.2s'
-                    }} title={`${d.day}: ${d.val}% activity`} />
-                  </div>
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{d.day}</span>
-                </div>
-              ))}
+              {(() => {
+                const maxActivityVal = Math.max(1, ...activityData.map(d => d.val));
+                return activityData.map(d => {
+                  const pct = Math.round((d.val / maxActivityVal) * 100);
+                  return (
+                    <div key={d.day} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, height: '100%' }}>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'flex-end', width: '28px', marginBottom: '8px' }}>
+                        <div style={{
+                          width: '100%',
+                          height: `${pct}%`,
+                          background: d.active ? 'var(--accent)' : 'rgba(124, 92, 252, 0.15)',
+                          borderRadius: '6px',
+                          transition: 'all 0.2s'
+                        }} title={`${d.day}: ${d.val} messages`} />
+                      </div>
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{d.day}</span>
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
         </div>
