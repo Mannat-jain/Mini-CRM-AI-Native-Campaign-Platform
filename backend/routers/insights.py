@@ -71,3 +71,19 @@ def channel_breakdown(db: Session = Depends(get_db)):
             data[channel] = {}
         data[channel][status] = count
     return data
+
+@router.get("/communications")
+def list_communications(db: Session = Depends(get_db)):
+    comms = db.query(Communication).order_by(Communication.updated_at.desc()).limit(50).all()
+    result = []
+    for c in comms:
+        result.append({
+            "id": c.id,
+            "customer_name": c.customer.name if c.customer else "Unknown",
+            "campaign_name": c.campaign.name if c.campaign else "System",
+            "channel": c.channel or "email",
+            "status": c.status or "queued",
+            "sent_at": c.sent_at or c.updated_at
+        })
+    return result
+

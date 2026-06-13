@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from pydantic import BaseModel
 from typing import Optional
-import anthropic
+import httpx
 from config import settings
 
 router = APIRouter()
@@ -62,28 +62,48 @@ class InsightRequest(BaseModel):
     stats: dict
     campaign_name: Optional[str] = None
 
-def get_claude():
-    if not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
-    return anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+def call_llm(system: str, prompt: str, max_tokens: int = 500) -> str:
+    if not settings.GROQ_API_KEY:
+        raise HTTPException(500, "GROQ_API_KEY not configured in .env file")
+        
+    headers = {
+        "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "llama-3.1-8b-instant",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.2
+    }
+    
+    with httpx.Client(timeout=30.0) as client:
+        try:
+            response = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            raise HTTPException(500, f"AI generation failed: {str(e)}")
 
 @router.post("/segment")
 def nl_to_segment(data: NLSegmentRequest, db: Session = Depends(get_db)):
     """Convert natural language to SQL segment query"""
-    client = get_claude()
+    sql_query = call_llm(system=SEGMENT_SYSTEM, prompt=data.query, max_tokens=500)
     
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=500,
-        system=SEGMENT_SYSTEM,
-        messages=[{"role": "user", "content": data.query}]
-    )
-    
-    sql_query = response.content[0].text.strip()
     # Clean up any accidental markdown
-    if sql_query.startswith("```"):
-        lines = sql_query.split("\n")
-        sql_query = "\n".join(lines[1:-1])
+    if "```" in sql_query:
+        parts = sql_query.split("```")
+        if len(parts) >= 3:
+            sql_query = parts[1]
+            if sql_query.startswith("sql"):
+                sql_query = sql_query[3:]
+            elif sql_query.startswith("json"):
+                sql_query = sql_query[4:]
+    sql_query = sql_query.strip()
     
     # Preview the result
     from sqlalchemy import text
@@ -104,44 +124,25 @@ def nl_to_segment(data: NLSegmentRequest, db: Session = Depends(get_db)):
 @router.post("/message")
 def draft_message(data: MessageDraftRequest):
     """AI-generated campaign message draft"""
-    client = get_claude()
-    
     prompt = f"Channel: {data.channel}\nAudience: {data.segment_description}\nCampaign goal: {data.campaign_goal}\n\nWrite the message:"
-    
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=300,
-        system=MESSAGE_SYSTEM,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    return {"message": response.content[0].text.strip()}
+    message = call_llm(system=MESSAGE_SYSTEM, prompt=prompt, max_tokens=300)
+    return {"message": message}
 
 @router.post("/insights")
 def generate_insights(data: InsightRequest):
     """AI-generated campaign insight summary"""
-    client = get_claude()
-    
     stats_str = "\n".join([f"{k}: {v}" for k, v in data.stats.items()])
     prompt = f"Campaign: {data.campaign_name or 'Recent campaign'}\n\nStats:\n{stats_str}\n\nProvide insight:"
-    
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=200,
-        system=INSIGHT_SYSTEM,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    return {"insight": response.content[0].text.strip()}
+    insight = call_llm(system=INSIGHT_SYSTEM, prompt=prompt, max_tokens=200)
+    return {"insight": insight}
 
 @router.post("/chat")
 def ai_chat(data: dict, db: Session = Depends(get_db)):
     """General AI chat for CRM assistance"""
-    client = get_claude()
     message = data.get("message", "")
     
     # Get context
-    from models import Customer, Campaign, Segment
+    from models import Customer, Campaign
     from sqlalchemy import func
     total_customers = db.query(func.count(Customer.id)).scalar()
     total_campaigns = db.query(func.count(Campaign.id)).scalar()
@@ -157,14 +158,8 @@ You can help with:
 
 Be concise, practical, and marketing-focused. If the user wants to create a segment, ask them to use the Segment Builder with natural language."""
     
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=400,
-        system=system,
-        messages=[{"role": "user", "content": message}]
-    )
-    
-    return {"response": response.content[0].text.strip()}
+    response = call_llm(system=system, prompt=message, max_tokens=400)
+    return {"response": response}
 
 RECOMMENDATION_SYSTEM = """You are a CRM marketing strategist AI. You will be given a list of
 customer segments with their live counts from a real database.
@@ -271,6 +266,9 @@ def get_recommendations(db: Session = Depends(get_db)):
         if raw.startswith("```"):
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1])
+            if raw.startswith("json"):
+                raw = raw[4:]
+        raw = raw.strip()
 
         import json
         parsed = json.loads(raw)

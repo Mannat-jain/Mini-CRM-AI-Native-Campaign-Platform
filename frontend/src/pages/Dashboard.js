@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Users, Megaphone, TrendingUp, MousePointerClick, RefreshCw, Database } from 'lucide-react';
-import { customersAPI, insightsAPI } from '../api';
+import { useNavigate } from 'react-router-dom';
+import { Users, Megaphone, TrendingUp, MousePointerClick, RefreshCw, Database, Sparkles, Bot, Trash2, Upload, AlertCircle, Play } from 'lucide-react';
+import { customersAPI, insightsAPI, aiAPI, campaignsAPI } from '../api';
 
 function StatCard({ icon: Icon, label, value, sub, color = 'accent' }) {
   return (
@@ -22,9 +23,8 @@ function ActivityBarChart({ overview }) {
 
   let data;
   if (overview?.daily_activity?.length === 7) {
-    data = overview.daily_activity; // [{ sent, opened }, ...] from backend
+    data = overview.daily_activity;
   } else {
-    // Fallback: spread totals across the week with a realistic curve
     const totalSent = overview?.total_communications || 0;
     const totalOpened = overview?.opened || 0;
     const weights = [0.10, 0.15, 0.12, 0.18, 0.22, 0.13, 0.10];
@@ -39,7 +39,7 @@ function ActivityBarChart({ overview }) {
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-16">
-        <h3 style={{ fontSize: '14px' }}>Activity — Last 7 Days</h3>
+        <h3 style={{ fontSize: '14px', fontWeight: 600 }}>Activity — Last 7 Days</h3>
         <div className="chart-legend">
           <span className="chart-legend-item">
             <span className="chart-legend-dot" style={{ background: 'var(--accent)' }} /> Sent
@@ -65,12 +65,18 @@ function ActivityBarChart({ overview }) {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
+  
   const [stats, setStats] = useState(null);
   const [overview, setOverview] = useState(null);
+  const [recommendations, setRecommendations] = useState([]);
+  const [campaigns, setCampaigns] = useState([]);
+  
   const [seeding, setSeeding] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
+  
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -79,10 +85,19 @@ export default function Dashboard() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, o] = await Promise.all([customersAPI.stats(), insightsAPI.overview()]);
+      const [s, o, c, r] = await Promise.all([
+        customersAPI.stats(),
+        insightsAPI.overview(),
+        campaignsAPI.list(),
+        aiAPI.recommendations()
+      ]);
       setStats(s.data);
       setOverview(o.data);
-    } catch (e) { }
+      setCampaigns(c.data || []);
+      setRecommendations(r.data?.recommendations || []);
+    } catch (e) {
+      console.error(e);
+    }
     setLoading(false);
   };
 
@@ -140,7 +155,9 @@ export default function Dashboard() {
     fileInputRef.current?.click();
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
@@ -151,18 +168,13 @@ export default function Dashboard() {
   const noData = !stats || stats.total_customers === 0;
 
   return (
-    <div>
+    <div className="page-container">
       <div className="page-header">
         <div>
           <h1 className="page-title">Dashboard</h1>
           <p className="page-subtitle">Your campaign command centre</p>
         </div>
-        <div className="flex gap-8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
-          {!noData && (
-            <button className="btn btn-danger btn-sm" onClick={reset} disabled={resetting}>
-              {resetting ? <><div className="spinner" /> Resetting...</> : 'Reset Database'}
-            </button>
-          )}
+        <div className="flex gap-8" style={{ alignItems: 'center' }}>
           <button className="btn btn-secondary btn-sm" onClick={load}>
             <RefreshCw size={13} /> Refresh
           </button>
@@ -215,7 +227,7 @@ export default function Dashboard() {
                 style={{ display: 'none' }}
               />
               <button className="btn btn-secondary" onClick={triggerUpload} disabled={uploading} style={{ width: '100%', justifyContent: 'center', maxWidth: '280px' }}>
-                {uploading ? <><div className="spinner" /> Uploading...</> : <>Upload CSV or JSON Dataset</>}
+                {uploading ? <><div className="spinner" /> Uploading...</> : <><Upload size={14} /> Upload CSV or JSON Dataset</>}
               </button>
             </div>
 
@@ -237,55 +249,135 @@ export default function Dashboard() {
               <StatCard icon={MousePointerClick} label="Click Rate" value={`${overview?.click_rate || 0}%`} sub={`${overview?.open_rate || 0}% open rate`} color="yellow" />
             </div>
 
-            <div className="grid-2" style={{ marginBottom: '16px' }}>
-              <div className="card">
-                <h3 style={{ fontSize: '14px', marginBottom: '20px' }}>Delivery Funnel</h3>
-                {[
-                  { label: 'Sent', value: overview?.total_communications || 0, color: 'var(--blue)' },
-                  { label: 'Delivered', value: overview?.delivered || 0, color: 'var(--green)' },
-                  { label: 'Opened', value: overview?.opened || 0, color: 'var(--accent)' },
-                  { label: 'Clicked', value: overview?.clicked || 0, color: 'var(--yellow)' },
-                  { label: 'Failed', value: overview?.failed || 0, color: 'var(--red)' },
-                ].map(({ label, value, color }) => {
-                  const total = overview?.total_communications || 1;
-                  const pct = Math.round(value / total * 100);
-                  return (
-                    <div key={label} style={{ marginBottom: '14px' }}>
-                      <div className="flex justify-between text-sm mb-4">
-                        <span>{label}</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>{value.toLocaleString()} ({pct}%)</span>
-                      </div>
-                      <div className="stat-bar">
-                        <div className="stat-bar-fill" style={{ width: `${pct}%`, background: color }} />
-                      </div>
+            <div className="dashboard-grid">
+              {/* Left Column: Recommendations & Recent Campaigns */}
+              <div className="dashboard-left-column" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* AI Recommendations */}
+                <div className="card dashboard-recs-panel">
+                  <div className="flex items-center justify-between mb-16" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+                    <div className="flex items-center gap-8">
+                      <Sparkles className="color-primary" size={18} />
+                      <h3 style={{ fontSize: '15px', fontWeight: 600 }}>AI Recommendations</h3>
                     </div>
-                  );
-                })}
+                    <span className="badge badge-blue flex items-center gap-4" style={{ fontSize: '11px' }}>
+                      <Bot size={11} /> Live from your data
+                    </span>
+                  </div>
+
+                  {recommendations.length === 0 ? (
+                    <div className="flex-center" style={{ height: '300px', flexDirection: 'column', gap: '8px', color: 'var(--text-secondary)' }}>
+                      <Bot size={28} />
+                      <p style={{ fontSize: '13px' }}>Generating suggestions...</p>
+                    </div>
+                  ) : (
+                    <div className="dashboard-recs-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {recommendations.slice(0, 4).map((rec) => {
+                        let badgeClass = 'badge-blue';
+                        if (rec.urgency === 'high') badgeClass = 'badge-red';
+                        else if (rec.urgency === 'medium') badgeClass = 'badge-yellow';
+
+                        return (
+                          <div key={rec.segment_key} className="dashboard-rec-item flex items-center justify-between" style={{ padding: '12px', border: '1px solid var(--border-color)', borderRadius: '10px', background: 'rgba(255,255,255,0.01)' }}>
+                            <div style={{ flex: 1, paddingRight: '12px' }}>
+                              <div className="flex items-center gap-8 mb-4">
+                                <span style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)' }}>{rec.title}</span>
+                                <span className={`badge ${badgeClass}`} style={{ fontSize: '9px', padding: '1px 5px' }}>{rec.urgency}</span>
+                              </div>
+                              <p className="text-secondary" style={{ fontSize: '12px', margin: 0, lineHeight: 1.4 }}>{rec.reasoning}</p>
+                            </div>
+                            
+                            <div className="flex items-center gap-12">
+                              <div style={{ textAlign: 'right' }}>
+                                <span style={{ fontSize: '14px', fontWeight: 600, display: 'block', color: 'var(--text-primary)' }}>{rec.count}</span>
+                                <span className="text-muted" style={{ fontSize: '10px' }}>customers</span>
+                              </div>
+                              
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                style={{ padding: '6px 10px', fontSize: '11.5px' }}
+                                onClick={() => navigate('/ai-planner', { state: { selectedSegmentKey: rec.segment_key } })}
+                              >
+                                Create
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Recent Campaigns list */}
+                <div className="card" style={{ padding: '20px' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '16px' }}>Recent Campaigns</h3>
+                  {campaigns.length === 0 ? (
+                    <p className="text-secondary text-sm" style={{ margin: 0 }}>No campaigns created yet.</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {campaigns.slice(0, 3).map((camp) => (
+                        <div key={camp.id} className="flex items-center justify-between" style={{ padding: '8px 10px', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'rgba(255,255,255,0.01)' }}>
+                          <div>
+                            <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', display: 'block' }}>{camp.name}</span>
+                            <span className="text-muted" style={{ fontSize: '11px' }}>Channel: {camp.channel}</span>
+                          </div>
+                          <span className={`badge ${camp.status === 'sent' ? 'badge-green' : 'badge-yellow'}`} style={{ fontSize: '10px' }}>
+                            {camp.status.toUpperCase()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* CHANGE: was a single-color 7-bar chart, now dual-color Sent vs Opened with legend */}
-              <ActivityBarChart overview={overview} />
-            </div>
-
-            <div className="grid-2">
-              <div className="card" style={{ gridColumn: '1 / -1' }}>
-                <h3 style={{ fontSize: '14px', marginBottom: '20px' }}>Quick Actions</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {/* Right Column: Stats & Operations */}
+              <div className="dashboard-stats-panel" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* Delivery Funnel */}
+                <div className="card" style={{ padding: '20px' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '20px' }}>Delivery Funnel</h3>
                   {[
-                    { label: '→ Create a new audience segment', href: '/segments', color: 'var(--accent)' },
-                    { label: '→ Launch a campaign', href: '/campaigns', color: 'var(--green)' },
-                    { label: '→ View campaign performance', href: '/insights', color: 'var(--yellow)' },
-                  ].map(({ label, href, color }) => (
-                    <a key={href} href={href} style={{
-                      display: 'block', padding: '12px 14px',
-                      background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius)', color, textDecoration: 'none',
-                      fontSize: '13.5px', fontWeight: 500,
-                      transition: 'all 0.15s'
-                    }}>{label}</a>
-                  ))}
-                  {/* "Ask AI for segment ideas" link removed — AI is now the
-                      floating chat button on every page, not a separate route */}
+                    { label: 'Sent', value: overview?.total_communications || 0, color: 'var(--blue)' },
+                    { label: 'Delivered', value: overview?.delivered || 0, color: 'var(--green)' },
+                    { label: 'Opened', value: overview?.opened || 0, color: 'var(--accent)' },
+                    { label: 'Clicked', value: overview?.clicked || 0, color: 'var(--yellow)' },
+                  ].map(({ label, value, color }) => {
+                    const total = overview?.total_communications || 1;
+                    const pct = Math.round(value / total * 100);
+                    return (
+                      <div key={label} style={{ marginBottom: '14px' }}>
+                        <div className="flex justify-between text-sm mb-4">
+                          <span>{label}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{value.toLocaleString()} ({pct}%)</span>
+                        </div>
+                        <div className="stat-bar">
+                          <div className="stat-bar-fill" style={{ width: `${pct}%`, background: color }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Activity bar chart */}
+                <ActivityBarChart overview={overview} />
+
+                {/* Data Management & Operations panel */}
+                <div className="card" style={{ padding: '20px' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '16px' }}>Data Management</h3>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleUpload}
+                      accept=".csv,.json"
+                      style={{ display: 'none' }}
+                    />
+                    <button className="btn btn-secondary btn-sm" onClick={triggerUpload} disabled={uploading}>
+                      {uploading ? <><div className="spinner" /> Uploading...</> : <><Upload size={13} /> Upload CSV/JSON</>}
+                    </button>
+                    <button className="btn btn-danger btn-sm" onClick={reset} disabled={resetting}>
+                      {resetting ? <><div className="spinner" /> Resetting...</> : <><Trash2 size={13} /> Reset DB</>}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

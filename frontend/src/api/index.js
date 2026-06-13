@@ -61,6 +61,7 @@ export const campaignsAPI = {
 export const insightsAPI = {
   overview: () => API.get('/api/insights/overview'),
   performance: () => API.get('/api/insights/campaigns/performance'),
+  communications: () => API.get('/api/insights/communications'),
 };
 
 export const aiAPI = {

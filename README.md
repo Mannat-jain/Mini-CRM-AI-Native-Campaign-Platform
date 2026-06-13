@@ -111,9 +111,9 @@ npm start
 | `routers/customers.py` | Endpoints to fetch, add, seed sample data, reset databases, and upload JSON/CSV datasets. |
 | `routers/segments.py` | Endpoints to construct, list, and preview audience segments. |
 | `routers/campaigns.py` | Endpoints to build campaigns, draft copies, and dispatch message queues. |
-| `routers/insights.py` | Endpoints returning aggregated counts, communication tallies, and click/funnel rates. |
+| `routers/insights.py` | Endpoints returning aggregated counts, channel breakdowns, and the last 50 communication events. |
 | `routers/receipts.py` | Callback endpoint receiving delivery receipts from the channel service. |
-| `routers/ai_agent.py` | Integrates LLM interactions using Groq (Llama 3) for NL-to-SQL and drafting copies. |
+| `routers/ai_agent.py` | Integrates LLM interactions using Groq (Llama 3) for NL-to-SQL, drafting copies, and recommendations. |
 
 ### 3. Channel Service Files (`channel-service/`)
 | File / Directory | Description |
@@ -125,17 +125,17 @@ npm start
 ### 4. Frontend Files (`frontend/`)
 | File / Directory | Description |
 | :--- | :--- |
-| `src/App.js` | Main React routing module; integrates light/dark theme variables and sidebar menu states. |
+| `src/App.js` | Main React routing module; integrates light/dark theme variables, sidebar navigation, and the global floating AI Chat drawer. |
 | `src/index.js` | React application mount and rendering anchor. |
-| `src/index.css` | Universal CSS sheet; defines premium color tokens, light beige rules, and mobile media queries. |
-| `src/api/index.js` | Axios endpoint configs for customers, segments, campaigns, and AI chatbots. |
+| `src/index.css` | Universal CSS sheet; defines premium color tokens, light themes, campaign grids, and layout rules. |
+| `src/api/index.js` | Axios endpoint configs for customers, segments, campaigns, and AI integration. |
 | `src/pages/` | Folder containing individual page components. |
 | `src/pages/Dashboard.js` | Displays funnels, customer seed triggers, DB resets, and custom file uploaders. |
 | `src/pages/Customers.js` | Searchable customer listing page exhibiting full ordering logs and customer tag bubbles. |
 | `src/pages/Segments.js` | Audience segmentation builder incorporating Natural Language input and SQL previews. |
-| `src/pages/Campaigns.js` | Interfaces for setting up, drafting (with AI), and executing communication flows. |
-| `src/pages/Insights.js` | Detail-rich tracking log that displays individual messaging events and real-time outcomes. |
-| `src/pages/AIChat.js` | General AI-powered marketer chatbot providing strategy advice and segments. |
+| `src/pages/Campaigns.js` | Card-grid campaign management interfaces with delayed hover-triggered AI performance summaries. |
+| `src/pages/Insights.js` | High-fidelity metrics dashboard with channel progress bars, a 7-day activity chart, and a live searchable communications table. |
+| `src/pages/AIPlanner.js` | Split-pane campaign drafting workspace displaying active Opportunities and automated AI copywriting generation. |
 
 ---
 
@@ -144,6 +144,7 @@ npm start
 2. **AI Message Drafting** — Llama 3 writes personalized copy tailored to the selected customer segment and target channel.
 3. **AI Performance Insights** — Llama 3 evaluates aggregate campaign analytics and summarizes performance.
 4. **AI Chat Assistant** — Strategy consulting chat answering query design and campaign ideas.
+5. **AI Campaign Recommendation Planner** — Analyzes live database counts (e.g., inactive high spenders, quiet repeat buyers, VIP opportunities) and generates contextual recommendations with automated campaign execution.
 
 ---
 
@@ -170,10 +171,12 @@ npm start
 | `/api/campaigns/{id}/send` | POST | Launch campaign dispatch queue. |
 | `/api/receipts/callback` | POST | Channel callback receiver. |
 | `/api/insights/overview` | GET | Aggregate metrics and funnels. |
+| `/api/insights/communications` | GET | List the 50 most recent communication events. |
 | `/api/ai/segment` | POST | NL → SQL query generation. |
 | `/api/ai/message` | POST | AI campaign copy drafting. |
 | `/api/ai/insights` | POST | AI campaign performance insights. |
 | `/api/ai/chat` | POST | General assistant chat. |
+| `/api/ai/recommendations` | GET | Generate LLM recommendations from database metrics. |
 
 ---
 

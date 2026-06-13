@@ -6,6 +6,7 @@ import Customers from './pages/Customers';
 import Segments from './pages/Segments';
 import Campaigns from './pages/Campaigns';
 import Insights from './pages/Insights';
+import AIPlanner from './pages/AIPlanner';
 import { aiAPI } from './api';
 
 // CHANGE: 'AI Assistant' nav item removed — AI is now a floating
@@ -16,6 +17,7 @@ const navItems = [
   { to: '/segments', icon: Filter, label: 'Segments' },
   { to: '/campaigns', icon: Megaphone, label: 'Campaigns' },
   { to: '/insights', icon: BarChart3, label: 'Insights' },
+  { to: '/ai-planner', icon: Sparkles, label: 'AI Planner' },
 ];
 
 // NEW: Floating AI Chat drawer — replaces the old /ai page
@@ -158,6 +160,7 @@ export default function App() {
             <Route path="/segments" element={<Segments />} />
             <Route path="/campaigns" element={<Campaigns />} />
             <Route path="/insights" element={<Insights />} />
+            <Route path="/ai-planner" element={<AIPlanner />} />
             {/* /ai route removed — AI is the floating drawer below */}
           </Routes>
         </main>
