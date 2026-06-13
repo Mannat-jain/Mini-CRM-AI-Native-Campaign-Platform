@@ -1,195 +1,146 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from database import get_db
+# backend/routers/ai_agent.py  ── ADDITION
+# =====================================================================
+# ADD this endpoint to the bottom of your existing ai_agent.py file.
+# It's the backend for the AI Planner modal in Campaigns.js.
+# =====================================================================
+
+# (Your existing imports and router setup stay as-is)
+# from fastapi import APIRouter, Depends
+# from sqlalchemy.orm import Session
+# from database import get_db
+# from config import settings
+# import groq, json
+
+# ── ADD THIS ENDPOINT ────────────────────────────────────────────────
+
 from pydantic import BaseModel
-from typing import Optional
-import anthropic
-from config import settings
+from typing import List
 
-router = APIRouter()
+class PlanRequest(BaseModel):
+    goal: str
 
-DB_SCHEMA = """
-You have access to a SQLite CRM database with these tables:
+class CampaignPlan(BaseModel):
+    title: str
+    segment: str
+    channel: str
+    message: str
 
-customers(id TEXT, name TEXT, email TEXT, phone TEXT, city TEXT, age INTEGER, gender TEXT, tags JSON, created_at DATETIME)
-orders(id TEXT, customer_id TEXT, amount REAL, product_name TEXT, category TEXT, status TEXT, ordered_at DATETIME)
+class PlanResponse(BaseModel):
+    campaigns: List[CampaignPlan]
 
-The 'tags' column in customers is a JSON array stored as text. Use json_each() for SQLite JSON operations if needed.
-All date comparisons use SQLite date functions like date('now', '-30 days').
-Always return customer IDs as the first column in your SELECT.
-"""
 
-SEGMENT_SYSTEM = f"""You are a CRM analyst AI. Convert natural language audience descriptions into safe SQLite SELECT queries.
+@router.post("/plan", response_model=PlanResponse)
+async def plan_campaign(req: PlanRequest, db: Session = Depends(get_db)):
+    """
+    Takes a broad marketer goal and returns 2-4 campaign plans,
+    each with an audience, message, and recommended channel.
 
-{DB_SCHEMA}
-
-Rules:
-- ALWAYS start with: SELECT DISTINCT c.id FROM customers c
-- JOIN orders using: LEFT JOIN orders o ON o.customer_id = c.id
-- Only use SELECT, no mutations
-- Return ONLY the SQL query, nothing else, no markdown, no explanation
-- Use realistic date math with SQLite date functions
-
-Examples:
-"customers who spent more than 5000 total" → SELECT DISTINCT c.id FROM customers c LEFT JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING SUM(o.amount) > 5000
-"customers who haven't ordered in 90 days" → SELECT DISTINCT c.id FROM customers c WHERE c.id NOT IN (SELECT DISTINCT customer_id FROM orders WHERE ordered_at > date('now', '-90 days'))
-"customers from Mumbai who ordered fashion" → SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id WHERE c.city = 'Mumbai' AND o.category = 'Fashion'
-"""
-
-MESSAGE_SYSTEM = """You are a marketing copywriter for a D2C brand. Write a short, personalized campaign message.
-
-Rules:
-- Use {{name}} as placeholder for customer name
-- Keep it under 160 characters for SMS, 300 for others
-- Be warm, direct, and action-oriented
-- No emojis unless channel is whatsapp
-- Return ONLY the message text, nothing else
-"""
-
-INSIGHT_SYSTEM = """You are a marketing analyst. Given campaign performance data, provide a 2-3 sentence insight summary.
-Be specific, actionable, and concise. Focus on what the numbers mean for the marketer.
-Return plain text only."""
-
-class NLSegmentRequest(BaseModel):
-    query: str
-
-class MessageDraftRequest(BaseModel):
-    segment_description: str
-    campaign_goal: str
-    channel: str = "email"
-
-class InsightRequest(BaseModel):
-    stats: dict
-    campaign_name: Optional[str] = None
-
-def call_llm(system: str, prompt: str, max_tokens: int = 500) -> str:
-    import httpx
-    key = settings.GROQ_API_KEY
-    if not key:
-        raise HTTPException(500, "API key not configured (please set GROQ_API_KEY in backend/.env)")
-    
-    if key.startswith("gsk_"):
-        # Use Groq API (OpenAI compatible)
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                response = client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "llama-3.3-70b-specdec",
-                        "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "max_tokens": max_tokens,
-                        "temperature": 0.2
-                    }
-                )
-                if response.status_code != 200:
-                    # Fallback model
-                    response = client.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {key}",
-                            "Content-Type": "application/json"
-                        },
-                        json={
-                            "model": "llama-3.1-8b-instant",
-                            "messages": [
-                                {"role": "system", "content": system},
-                                {"role": "user", "content": prompt}
-                            ],
-                            "max_tokens": max_tokens,
-                            "temperature": 0.2
-                        }
-                    )
-                response.raise_for_status()
-                return response.json()["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            raise HTTPException(500, f"Groq API call failed: {str(e)}")
-    else:
-        # Use Anthropic SDK
-        try:
-            client = anthropic.Anthropic(api_key=key)
-            response = client.messages.create(
-                model="claude-3-5-sonnet-latest",
-                max_tokens=max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.content[0].text.strip()
-        except Exception as e:
-            raise HTTPException(500, f"Anthropic API call failed: {str(e)}")
-
-@router.post("/segment")
-def nl_to_segment(data: NLSegmentRequest, db: Session = Depends(get_db)):
-    """Convert natural language to SQL segment query"""
-    sql_query = call_llm(system=SEGMENT_SYSTEM, prompt=data.query, max_tokens=500)
-    
-    # Clean up any accidental markdown
-    if sql_query.startswith("```"):
-        lines = sql_query.split("\n")
-        if lines[0].startswith("```sql") or lines[0] == "```":
-            sql_query = "\n".join(lines[1:-1])
-        else:
-            sql_query = "\n".join(lines[1:-1])
-    
-    # Preview the result
-    from sqlalchemy import text
-    from models import Customer
-    try:
-        result = db.execute(text(sql_query))
-        rows = result.fetchall()
-        customer_ids = [str(row[0]) for row in rows]
-        sample = db.query(Customer).filter(Customer.id.in_(customer_ids[:5])).all()
-        return {
-            "sql_query": sql_query,
-            "count": len(customer_ids),
-            "sample": [{"id": c.id, "name": c.name, "email": c.email, "city": c.city} for c in sample]
-        }
-    except Exception as e:
-        raise HTTPException(400, f"Generated SQL failed: {str(e)}")
-
-@router.post("/message")
-def draft_message(data: MessageDraftRequest):
-    """AI-generated campaign message draft"""
-    prompt = f"Channel: {data.channel}\nAudience: {data.segment_description}\nCampaign goal: {data.campaign_goal}\n\nWrite the message:"
-    message = call_llm(system=MESSAGE_SYSTEM, prompt=prompt, max_tokens=300)
-    return {"message": message}
-
-@router.post("/insights")
-def generate_insights(data: InsightRequest):
-    """AI-generated campaign insight summary"""
-    stats_str = "\n".join([f"{k}: {v}" for k, v in data.stats.items()])
-    prompt = f"Campaign: {data.campaign_name or 'Recent campaign'}\n\nStats:\n{stats_str}\n\nProvide insight:"
-    insight = call_llm(system=INSIGHT_SYSTEM, prompt=prompt, max_tokens=200)
-    return {"insight": insight}
-
-@router.post("/chat")
-def ai_chat(data: dict, db: Session = Depends(get_db)):
-    """General AI chat for CRM assistance"""
-    message = data.get("message", "")
-    
-    # Get context
-    from models import Customer, Campaign, Segment
+    The prompt includes live segment counts from the DB so that
+    the AI references real numbers, not hallucinated ones.
+    """
+    # Pull real segment counts to ground the AI
+    from models import Customer, Order
     from sqlalchemy import func
-    total_customers = db.query(func.count(Customer.id)).scalar()
-    total_campaigns = db.query(func.count(Campaign.id)).scalar()
-    
-    system = f"""You are an AI assistant for Xeno CRM, helping marketers reach their shoppers.
-Current data: {total_customers} customers, {total_campaigns} campaigns.
+    from datetime import datetime, timedelta
 
-You can help with:
-- Suggesting audience segments (describe who to target)
-- Campaign strategy advice  
-- Message copy suggestions
-- Interpreting campaign performance
+    now = datetime.utcnow()
 
-Be concise, practical, and marketing-focused. If the user wants to create a segment, ask them to use the Segment Builder with natural language."""
-    
-    response = call_llm(system=system, prompt=message, max_tokens=400)
-    return {"response": response}
+    inactive_premium = db.query(func.count(Customer.id)).filter(
+        Customer.total_spend > 5000,
+        Customer.last_order_date < now - timedelta(days=90)
+    ).scalar() or 0
 
+    one_time_buyers = db.query(func.count(Customer.id)).filter(
+        Customer.order_count == 1
+    ).scalar() or 0
+
+    vip_count = db.query(func.count(Customer.id)).filter(
+        Customer.total_spend > 20000
+    ).scalar() or 0
+
+    new_customers = db.query(func.count(Customer.id)).filter(
+        Customer.created_at > now - timedelta(days=30)
+    ).scalar() or 0
+
+    high_value_at_risk = db.query(func.count(Customer.id)).filter(
+        Customer.total_spend > 10000,
+        Customer.last_order_date < now - timedelta(days=60)
+    ).scalar() or 0
+
+    # Build prompt with live context
+    context = f"""
+You are an AI marketing assistant for a D2C brand CRM.
+
+Live customer data:
+- Inactive premium customers (spend >₹5000, no order 90d): {inactive_premium}
+- One-time buyers who never returned: {one_time_buyers}
+- VIP customers (spend >₹20000): {vip_count}
+- New customers (joined last 30 days): {new_customers}
+- High-value at risk (spend >₹10000, no order 60d): {high_value_at_risk}
+
+Marketer's goal: "{req.goal}"
+
+Based on the goal and the real customer data above, generate 2-4 targeted campaign plans.
+Each campaign should target a different audience segment.
+
+Respond ONLY with valid JSON in this exact format (no markdown, no explanation):
+{{
+  "campaigns": [
+    {{
+      "title": "short campaign name",
+      "segment": "segment description with count e.g. Inactive premium (324 customers)",
+      "channel": "WhatsApp|Email|SMS|RCS",
+      "message": "personalized message template using {{name}} placeholder"
+    }}
+  ]
+}}
+
+Rules:
+- Choose the most appropriate channel per segment (WhatsApp for urgent/personal, Email for detailed, SMS for short, RCS for rich)
+- Messages must feel personal and specific, not generic
+- Reference the actual customer counts from the live data above
+- 2 campaigns minimum, 4 maximum
+"""
+
+    client = groq.Groq(api_key=settings.groq_api_key)
+    response = client.chat.completions.create(
+        model="llama3-8b-8192",
+        messages=[{"role": "user", "content": context}],
+        temperature=0.7,
+        max_tokens=1000,
+    )
+
+    raw = response.choices[0].message.content.strip()
+
+    # Strip markdown fences if present
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+
+    try:
+        parsed = json.loads(raw)
+        return PlanResponse(campaigns=[CampaignPlan(**c) for c in parsed["campaigns"]])
+    except Exception:
+        # Fallback: return sensible hardcoded plans rather than 500
+        return PlanResponse(campaigns=[
+            CampaignPlan(
+                title="Win-back inactive premium",
+                segment=f"Inactive premium ({inactive_premium} customers)",
+                channel="WhatsApp",
+                message="Hi {name}, we've missed you! Enjoy 15% off your next order — valid 48 hours. 🛍️"
+            ),
+            CampaignPlan(
+                title="Retention — one-time buyers",
+                segment=f"One-time buyers ({one_time_buyers} customers)",
+                channel="RCS",
+                message="Hey {name}! Loved your last purchase? Here are picks you'll love next →"
+            ),
+            CampaignPlan(
+                title="VIP early access",
+                segment=f"VIP customers ({vip_count} customers)",
+                channel="WhatsApp",
+                message="Hi {name}, as a VIP you get exclusive early access — 24 hours before everyone else. ✨"
+            ),
+        ])

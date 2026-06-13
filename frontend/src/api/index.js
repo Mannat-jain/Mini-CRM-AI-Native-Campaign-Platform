@@ -1,44 +1,42 @@
+// frontend/src/api/index.js  ── ADDITIONS ONLY
+// =====================================================================
+// ADD these two functions to your existing api/index.js file.
+// Find the export block at the bottom and add planCampaign + previewSegment.
+// =====================================================================
+
 import axios from 'axios';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-const api = axios.create({ baseURL: API_BASE });
+const API = axios.create({
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8000',
+});
 
-export const customersAPI = {
-  list: (params) => api.get('/api/customers/', { params }),
-  create: (data) => api.post('/api/customers/', data),
-  stats: () => api.get('/api/customers/stats'),
-  seed: () => api.post('/api/customers/seed'),
-  reset: () => api.post('/api/customers/reset'),
-  upload: (formData) => api.post('/api/customers/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
-};
+// ── Existing exports (keep yours, these are for reference) ───────────
+export const getCustomers    = ()      => API.get('/api/customers/');
+export const seedCustomers   = ()      => API.post('/api/customers/seed');
+export const resetDB         = ()      => API.post('/api/customers/reset');
+export const uploadCustomers = (data)  => API.post('/api/customers/upload', data);
 
-export const segmentsAPI = {
-  list: () => api.get('/api/segments/'),
-  create: (data) => api.post('/api/segments/', data),
-  preview: (sql_query) => api.post('/api/segments/preview', { sql_query }),
-  getCustomers: (id) => api.get(`/api/segments/${id}/customers`),
-  delete: (id) => api.delete(`/api/segments/${id}`),
-};
+export const getSegments      = ()     => API.get('/api/segments/');
+export const createSegment    = (data) => API.post('/api/segments/', data);
+export const generateSegmentSQL = (nl) => API.post('/api/ai/segment', { query: nl });
 
-export const campaignsAPI = {
-  list: () => api.get('/api/campaigns/'),
-  create: (data) => api.post('/api/campaigns/', data),
-  send: (id) => api.post(`/api/campaigns/${id}/send`),
-  stats: (id) => api.get(`/api/campaigns/${id}/stats`),
-  delete: (id) => api.delete(`/api/campaigns/${id}`),
-};
+export const getCampaigns  = ()      => API.get('/api/campaigns/');
+export const createCampaign = (data) => API.post('/api/campaigns/', data);
+export const sendCampaign  = (id)    => API.post(`/api/campaigns/${id}/send`);
+export const draftMessage  = (data)  => API.post('/api/ai/message', data);
 
-export const insightsAPI = {
-  overview: () => api.get('/api/insights/overview'),
-  performance: () => api.get('/api/insights/campaigns/performance'),
-  channelBreakdown: () => api.get('/api/insights/channel/breakdown'),
-};
+export const getInsights      = ()     => API.get('/api/insights/overview');
+export const getAISummary     = (data) => API.post('/api/ai/insights', data);
+export const sendChatMessage  = (msg)  => API.post('/api/ai/chat', { message: msg });
 
-export const aiAPI = {
-  segment: (query) => api.post('/api/ai/segment', { query }),
-  message: (data) => api.post('/api/ai/message', data),
-  insights: (data) => api.post('/api/ai/insights', data),
-  chat: (message) => api.post('/api/ai/chat', { message }),
-};
+// ── NEW: Add these two ───────────────────────────────────────────────
+
+// Previews how many customers match a raw SQL query
+// Used in Segments.js after NL→SQL generation
+export const previewSegment = (sql) =>
+  API.post('/api/segments/preview', { sql_query: sql });
+
+// Sends a broad goal to the AI planner endpoint
+// Returns { campaigns: [{ title, segment, channel, message }, ...] }
+export const planCampaign = (goal) =>
+  API.post('/api/ai/plan', { goal });
