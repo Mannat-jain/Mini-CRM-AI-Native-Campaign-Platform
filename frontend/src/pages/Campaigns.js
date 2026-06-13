@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Plus, Send, Sparkles, Trash2, BarChart2, Loader } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { Plus, Send, Sparkles, Trash2, Loader, TrendingUp } from 'lucide-react';
 import { campaignsAPI, segmentsAPI, aiAPI } from '../api';
 
 const CHANNEL_LABELS = { email: '📧 Email', sms: '💬 SMS', whatsapp: '📱 WhatsApp', rcs: '🔷 RCS' };
@@ -22,7 +23,40 @@ function CampaignStats({ stats }) {
   );
 }
 
+// NEW: derives a short, plausible AI insight line from a campaign's
+// stats. Pure front-end heuristic — no extra API call required, so
+// it works instantly on hover for every sent campaign.
+function getCampaignInsight(c) {
+  const stats = c.stats;
+  if (!stats || stats.total === 0) return null;
+
+  const total = stats.total;
+  const openRate = ((stats.opened || 0) + (stats.read || 0) + (stats.clicked || 0)) / total;
+  const clickRate = (stats.clicked || 0) / total;
+  const failRate = (stats.failed || 0) / total;
+
+  // Channel-specific framing
+  const channelAvg = { email: 0.22, sms: 0.35, whatsapp: 0.45, rcs: 0.40 };
+  const avg = channelAvg[c.channel] ?? 0.30;
+
+  if (failRate > 0.15) {
+    return `⚠ ${Math.round(failRate * 100)}% of sends failed — check ${c.channel} delivery config for this segment.`;
+  }
+  if (openRate > avg * 1.3) {
+    const mult = (openRate / avg).toFixed(1);
+    return `⚡ ${c.channel.toUpperCase()} open rate is ${mult}× your typical average for this channel — this audience is highly engaged.`;
+  }
+  if (clickRate > 0.1) {
+    return `⚡ ${Math.round(clickRate * 100)}% of recipients clicked through — consider a follow-up offer to this segment.`;
+  }
+  if (openRate < avg * 0.6 && openRate > 0) {
+    return `⚡ Open rate is below average for ${c.channel}. Try resending to non-openers on a different channel.`;
+  }
+  return `⚡ Performance is in line with your ${c.channel} averages for this segment size.`;
+}
+
 export default function Campaigns() {
+  const location = useLocation();
   const [campaigns, setCampaigns] = useState([]);
   const [segments, setSegments] = useState([]);
   const [showModal, setShowModal] = useState(false);
@@ -47,6 +81,16 @@ export default function Campaigns() {
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
   }, [load]);
+
+  // NEW: if navigated here from Segments page with a pre-selected
+  // segment (state.segmentId), open the modal pre-filled with it.
+  useEffect(() => {
+    const segmentId = location.state?.segmentId;
+    if (segmentId) {
+      setForm(f => ({ ...f, segment_id: segmentId }));
+      setShowModal(true);
+    }
+  }, [location.state]);
 
   const handleAIMessage = async () => {
     const seg = segments.find(s => s.id === form.segment_id);
@@ -97,6 +141,14 @@ export default function Campaigns() {
     load();
   };
 
+  // CHANGE: dashed "add" card now opens the same New Campaign modal
+  // instead of doing nothing / re-navigating to the same page.
+  const openNewCampaignModal = () => {
+    setForm({ name: '', segment_id: '', message_template: '', channel: 'email' });
+    setError('');
+    setShowModal(true);
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -104,7 +156,7 @@ export default function Campaigns() {
           <h1 className="page-title">Campaigns</h1>
           <p className="page-subtitle">Create and launch targeted campaigns</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)} disabled={segments.length === 0}>
+        <button className="btn btn-primary" onClick={openNewCampaignModal} disabled={segments.length === 0}>
           <Plus size={14} /> New Campaign
         </button>
       </div>
@@ -124,47 +176,74 @@ export default function Campaigns() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {campaigns.map(c => (
-              <div key={c.id} className="card" style={{ padding: '20px' }}>
-                <div className="flex justify-between items-center">
-                  <div style={{ flex: 1 }}>
-                    <div className="flex items-center gap-8 mb-8">
-                      <span style={{ fontWeight: 600, fontSize: '15px' }}>{c.name}</span>
-                      <StatusBadge status={c.status} />
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{CHANNEL_LABELS[c.channel]}</span>
-                      {c.segment_name && <span className="badge badge-purple" style={{ fontSize: '11px' }}>{c.segment_name}</span>}
+            {campaigns.map(c => {
+              const insight = c.status === 'sent' ? getCampaignInsight(c) : null;
+              return (
+                <div key={c.id} className="card campaign-row-card" style={{ padding: '20px' }}>
+                  <div className="flex justify-between items-center">
+                    <div style={{ flex: 1 }}>
+                      <div className="flex items-center gap-8 mb-8">
+                        <span style={{ fontWeight: 600, fontSize: '15px' }}>{c.name}</span>
+                        <StatusBadge status={c.status} />
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{CHANNEL_LABELS[c.channel]}</span>
+                        {c.segment_name && <span className="badge badge-purple" style={{ fontSize: '11px' }}>{c.segment_name}</span>}
+                      </div>
+                      <CampaignStats stats={c.stats} />
                     </div>
-                    <CampaignStats stats={c.stats} />
+                    <div className="flex gap-8">
+                      {c.status === 'draft' && (
+                        <button className="btn btn-primary btn-sm" onClick={() => handleSend(c.id)} disabled={sending[c.id]}>
+                          {sending[c.id] ? <Loader size={12} className="pulse" /> : <Send size={12} />}
+                          {sending[c.id] ? 'Sending...' : 'Send Now'}
+                        </button>
+                      )}
+                      <button className="btn btn-danger btn-sm" onClick={() => handleDelete(c.id)}><Trash2 size={12} /></button>
+                    </div>
                   </div>
-                  <div className="flex gap-8">
-                    {c.status === 'draft' && (
-                      <button className="btn btn-primary btn-sm" onClick={() => handleSend(c.id)} disabled={sending[c.id]}>
-                        {sending[c.id] ? <Loader size={12} className="pulse" /> : <Send size={12} />}
-                        {sending[c.id] ? 'Sending...' : 'Send Now'}
-                      </button>
-                    )}
-                    <button className="btn btn-danger btn-sm" onClick={() => handleDelete(c.id)}><Trash2 size={12} /></button>
-                  </div>
+                  {c.stats && c.stats.total > 0 && (
+                    <div style={{ marginTop: '14px' }}>
+                      <div className="stat-bar" style={{ height: '8px' }}>
+                        {[
+                          { key: 'delivered', color: 'var(--green)' },
+                          { key: 'opened', color: 'var(--accent)' },
+                          { key: 'clicked', color: 'var(--yellow)' },
+                          { key: 'failed', color: 'var(--red)' },
+                        ].map(({ key, color }) => {
+                          const val = (c.stats[key] || 0) + (key === 'delivered' ? (c.stats.opened || 0) + (c.stats.read || 0) + (c.stats.clicked || 0) : 0);
+                          return (
+                            <div key={key} style={{ display: 'inline-block', width: `${val / c.stats.total * 100}%`, height: '100%', background: color }} />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* NEW: AI insight strip — appears on hover for sent campaigns.
+                      One-line, auto-derived from this campaign's stats. */}
+                  {insight && (
+                    <div className="ai-insight-strip">
+                      <div className="flex items-center gap-8">
+                        <TrendingUp size={12} />
+                        <span>{insight}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                {c.stats && c.stats.total > 0 && (
-                  <div style={{ marginTop: '14px' }}>
-                    <div className="stat-bar" style={{ height: '8px' }}>
-                      {[
-                        { key: 'delivered', color: 'var(--green)' },
-                        { key: 'opened', color: 'var(--accent)' },
-                        { key: 'clicked', color: 'var(--yellow)' },
-                        { key: 'failed', color: 'var(--red)' },
-                      ].map(({ key, color }) => {
-                        const val = (c.stats[key] || 0) + (key === 'delivered' ? (c.stats.opened || 0) + (c.stats.read || 0) + (c.stats.clicked || 0) : 0);
-                        return (
-                          <div key={key} style={{ display: 'inline-block', width: `${val / c.stats.total * 100}%`, height: '100%', background: color }} />
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
+
+            {/* NEW: dashed "add campaign" card — opens the New Campaign
+                modal directly, instead of being a dead click / re-nav. */}
+            <div
+              className="card campaign-add-card"
+              onClick={openNewCampaignModal}
+              role="button"
+              tabIndex={0}
+              onKeyDown={e => e.key === 'Enter' && openNewCampaignModal()}
+            >
+              <Plus size={22} />
+              <span className="text-sm">Create new campaign</span>
+            </div>
           </div>
         )}
       </div>

@@ -1,8 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Sparkles, Eye, Trash2, Filter, Loader } from 'lucide-react';
+import { Plus, Sparkles, Eye, Trash2, Filter, Loader, Megaphone } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { segmentsAPI, aiAPI } from '../api';
 
+// NEW: urgency badge class based on segment size — bigger segments
+// get a stronger color, matching the Dashboard recommendation styling
+function sizeBadgeClass(count) {
+  if (count > 200) return 'badge-red';
+  if (count > 80) return 'badge-yellow';
+  return 'badge-green';
+}
+
 export default function Segments() {
+  const navigate = useNavigate();
   const [segments, setSegments] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [nlQuery, setNlQuery] = useState('');
@@ -69,6 +79,11 @@ export default function Segments() {
     load();
   };
 
+  // NEW: navigate to Campaigns with this segment pre-selected
+  const handleCreateCampaign = (segmentId) => {
+    navigate('/campaigns', { state: { segmentId } });
+  };
+
   const examples = [
     'Customers who spent over ₹5000 total',
     'High-value buyers from Mumbai or Delhi',
@@ -100,44 +115,76 @@ export default function Segments() {
             </button>
           </div>
         ) : (
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Segment</th>
-                  <th>Audience Size</th>
-                  <th>AI Query</th>
-                  <th>Created</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {segments.map(s => (
-                  <tr key={s.id}>
-                    <td>
-                      <div style={{ fontWeight: 500 }}>{s.name}</div>
-                      {s.description && <div className="text-xs text-muted mt-4">{s.description}</div>}
-                    </td>
-                    <td>
-                      <span className="badge badge-purple">{s.customer_count.toLocaleString()} customers</span>
-                    </td>
-                    <td>
-                      {s.nl_query
-                        ? <span style={{ color: 'var(--accent)', fontSize: '12px', fontStyle: 'italic' }}>"{s.nl_query}"</span>
-                        : <span className="text-muted text-xs">Manual SQL</span>}
-                    </td>
-                    <td className="text-muted text-sm">{new Date(s.created_at).toLocaleDateString('en-IN')}</td>
-                    <td>
-                      <div className="flex gap-8">
-                        <button className="btn btn-ghost btn-sm" title="View customers"><Eye size={13} /></button>
-                        <button className="btn btn-danger btn-sm" onClick={() => handleDelete(s.id)}><Trash2 size={13} /></button>
-                      </div>
-                    </td>
+          <>
+            <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: '24px' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Segment</th>
+                    <th>Audience Size</th>
+                    <th>AI Query</th>
+                    <th>Created</th>
+                    <th>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {segments.map(s => (
+                    <tr key={s.id}>
+                      <td>
+                        <div style={{ fontWeight: 500 }}>{s.name}</div>
+                        {s.description && <div className="text-xs text-muted mt-4">{s.description}</div>}
+                      </td>
+                      <td>
+                        <span className="badge badge-purple">{s.customer_count.toLocaleString()} customers</span>
+                      </td>
+                      <td>
+                        {s.nl_query
+                          ? <span style={{ color: 'var(--accent)', fontSize: '12px', fontStyle: 'italic' }}>"{s.nl_query}"</span>
+                          : <span className="text-muted text-xs">Manual SQL</span>}
+                      </td>
+                      <td className="text-muted text-sm">{new Date(s.created_at).toLocaleDateString('en-IN')}</td>
+                      <td>
+                        <div className="flex gap-8">
+                          <button className="btn btn-ghost btn-sm" title="View customers"><Eye size={13} /></button>
+                          <button className="btn btn-danger btn-sm" onClick={() => handleDelete(s.id)}><Trash2 size={13} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* NEW SECTION: Saved Segments grid — gives the Segments page
+                the same "card-driven" feel as Dashboard / Campaigns,
+                with a one-click path into campaign creation per segment */}
+            <div className="section-label" style={{ marginTop: 0 }}>
+              Saved segments — quick launch
+            </div>
+            <div className="segments-grid">
+              {segments.map(s => (
+                <div key={`card-${s.id}`} className="segment-card">
+                  <div className="segment-card-top">
+                    <div>
+                      <div className="segment-card-name">{s.name}</div>
+                      <div className="segment-card-desc">
+                        {s.nl_query ? `"${s.nl_query}"` : (s.description || 'Manual SQL segment')}
+                      </div>
+                    </div>
+                    <span className={`badge ${sizeBadgeClass(s.customer_count)}`}>
+                      {s.customer_count.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="segment-card-footer">
+                    <span className="text-xs text-muted">{s.customer_count.toLocaleString()} customers</span>
+                    <button className="btn btn-secondary btn-sm" onClick={() => handleCreateCampaign(s.id)}>
+                      <Megaphone size={12} /> Create Campaign
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
 

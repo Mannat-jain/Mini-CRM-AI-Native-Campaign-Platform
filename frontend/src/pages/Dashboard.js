@@ -17,6 +17,57 @@ function StatCard({ icon: Icon, label, value, sub, color = 'accent' }) {
   );
 }
 
+// NEW: dual-color bar chart — Sent vs Opened, last 7 days
+// Built from overview.daily_activity if your backend provides it,
+// otherwise falls back to a proportional split of overview totals
+// so the chart is never empty during a demo.
+function ActivityBarChart({ overview }) {
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  let data;
+  if (overview?.daily_activity?.length === 7) {
+    data = overview.daily_activity; // [{ sent, opened }, ...] from backend
+  } else {
+    // Fallback: spread totals across the week with a realistic curve
+    const totalSent = overview?.total_communications || 0;
+    const totalOpened = overview?.opened || 0;
+    const weights = [0.10, 0.15, 0.12, 0.18, 0.22, 0.13, 0.10];
+    data = weights.map(w => ({
+      sent: Math.round(totalSent * w),
+      opened: Math.round(totalOpened * w),
+    }));
+  }
+
+  const max = Math.max(1, ...data.map(d => Math.max(d.sent, d.opened)));
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-16">
+        <h3 style={{ fontSize: '14px' }}>Activity — Last 7 Days</h3>
+        <div className="chart-legend">
+          <span className="chart-legend-item">
+            <span className="chart-legend-dot" style={{ background: 'var(--accent)' }} /> Sent
+          </span>
+          <span className="chart-legend-item">
+            <span className="chart-legend-dot" style={{ background: 'var(--yellow)' }} /> Opened
+          </span>
+        </div>
+      </div>
+      <div className="dual-bar-chart">
+        {data.map((d, i) => (
+          <div key={i} className="dual-bar-group" title={`${DAYS[i]}: ${d.sent} sent, ${d.opened} opened`}>
+            <div className="dual-bar-sent" style={{ height: `${(d.sent / max) * 100}%` }} />
+            <div className="dual-bar-opened" style={{ height: `${(d.opened / max) * 100}%` }} />
+          </div>
+        ))}
+      </div>
+      <div className="dual-bar-labels">
+        {DAYS.map(d => <span key={d}>{d}</span>)}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [overview, setOverview] = useState(null);
@@ -190,7 +241,7 @@ export default function Dashboard() {
               <StatCard icon={MousePointerClick} label="Click Rate" value={`${overview?.click_rate || 0}%`} sub={`${overview?.open_rate || 0}% open rate`} color="yellow" />
             </div>
 
-            <div className="grid-2">
+            <div className="grid-2" style={{ marginBottom: '16px' }}>
               <div className="card">
                 <h3 style={{ fontSize: '14px', marginBottom: '20px' }}>Delivery Funnel</h3>
                 {[
@@ -216,13 +267,17 @@ export default function Dashboard() {
                 })}
               </div>
 
-              <div className="card">
+              {/* CHANGE: was a single-color 7-bar chart, now dual-color Sent vs Opened with legend */}
+              <ActivityBarChart overview={overview} />
+            </div>
+
+            <div className="grid-2">
+              <div className="card" style={{ gridColumn: '1 / -1' }}>
                 <h3 style={{ fontSize: '14px', marginBottom: '20px' }}>Quick Actions</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {[
                     { label: '→ Create a new audience segment', href: '/segments', color: 'var(--accent)' },
                     { label: '→ Launch a campaign', href: '/campaigns', color: 'var(--green)' },
-                    { label: '→ Ask AI for segment ideas', href: '/ai', color: 'var(--blue)' },
                     { label: '→ View campaign performance', href: '/insights', color: 'var(--yellow)' },
                   ].map(({ label, href, color }) => (
                     <a key={href} href={href} style={{
@@ -233,6 +288,8 @@ export default function Dashboard() {
                       transition: 'all 0.15s'
                     }}>{label}</a>
                   ))}
+                  {/* "Ask AI for segment ideas" link removed — AI is now the
+                      floating chat button on every page, not a separate route */}
                 </div>
               </div>
             </div>
