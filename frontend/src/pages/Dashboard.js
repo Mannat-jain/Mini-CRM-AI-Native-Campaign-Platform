@@ -157,6 +157,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     load();
+    window.addEventListener('crm-data-update', load);
+    return () => window.removeEventListener('crm-data-update', load);
   }, []);
 
   if (loading) return (

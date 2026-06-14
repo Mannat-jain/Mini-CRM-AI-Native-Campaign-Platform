@@ -20,20 +20,38 @@ export default function AIChat() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef(null);
+  const textareaRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, loading]);
 
   const send = async (msg) => {
     const text = msg || input.trim();
     if (!text || loading) return;
     setInput('');
-    setMessages(m => [...m, { role: 'user', content: text }]);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+    const newMsg = { role: 'user', content: text };
+    const updatedMessages = [...messages, newMsg];
+    setMessages(updatedMessages);
     setLoading(true);
     try {
-      const res = await aiAPI.chat(text);
-      setMessages(m => [...m, { role: 'assistant', content: res.data.response }]);
+      const historyPayload = updatedMessages.map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+      const res = await aiAPI.chat({ message: text, history: historyPayload });
+      setMessages(m => [...m, { role: 'assistant', content: res.data.response, actions: res.data.actions }]);
+      
+      // Dispatch update event if any action was successfully executed
+      if (res.data.actions && res.data.actions.length > 0) {
+        const hasSuccess = res.data.actions.some(act => !act.error);
+        if (hasSuccess) {
+          window.dispatchEvent(new CustomEvent('crm-data-update'));
+        }
+      }
     } catch (e) {
       setMessages(m => [...m, { role: 'assistant', content: 'Sorry, I encountered an error. Please check that GROQ_API_KEY is configured in the backend.' }]);
     }
@@ -72,7 +90,22 @@ export default function AIChat() {
               color: 'var(--text-primary)',
               whiteSpace: 'pre-wrap'
             }}>
-              {m.content}
+              <div>{m.content}</div>
+              {m.actions && m.actions.length > 0 && (
+                <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {m.actions.map((act, ai) => (
+                    <div key={ai} style={{ fontSize: '11px', color: act.error ? '#ff6b6b' : '#22c55e', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span>{act.error ? '❌' : '✅'}</span>
+                      <span>
+                        {act.type === 'create_segment' && `Created segment "${act.name}" (${act.count} customers)`}
+                        {act.type === 'create_campaign' && `Created campaign "${act.name}"`}
+                        {act.type === 'send_campaign' && `Sent campaign "${act.name}" to ${act.count} customers`}
+                        {act.error && ` Error: ${act.error}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -100,16 +133,39 @@ export default function AIChat() {
             </button>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: '10px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '12px', padding: '10px 14px' }}>
-          <input
+        <div style={{ display: 'flex', gap: '10px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '12px', padding: '10px 14px', alignItems: 'flex-end' }}>
+          <textarea
+            ref={textareaRef}
             className="input"
-            style={{ border: 'none', background: 'transparent', padding: '2px 0', fontSize: '14px' }}
+            style={{ 
+              border: 'none', 
+              background: 'transparent', 
+              padding: '4px 0', 
+              fontSize: '14px',
+              resize: 'none',
+              outline: 'none',
+              flex: 1,
+              height: 'auto',
+              maxHeight: '120px',
+              fontFamily: 'inherit',
+              lineHeight: '1.4'
+            }}
             placeholder="Ask about segments, campaigns, performance..."
             value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
+            onChange={e => {
+              setInput(e.target.value);
+              e.target.style.height = 'auto';
+              e.target.style.height = `${e.target.scrollHeight}px`;
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            rows={1}
           />
-          <button className="btn btn-primary btn-sm" onClick={() => send()} disabled={loading || !input.trim()}>
+          <button className="btn btn-primary btn-sm" onClick={() => send()} disabled={loading || !input.trim()} style={{ height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Send size={13} />
           </button>
         </div>

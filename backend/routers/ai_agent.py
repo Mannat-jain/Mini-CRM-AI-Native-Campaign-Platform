@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from database import get_db
 from pydantic import BaseModel
@@ -89,6 +89,38 @@ def call_llm(system: str, prompt: str, max_tokens: int = 500) -> str:
         except Exception as e:
             raise HTTPException(500, f"AI generation failed: {str(e)}")
 
+def call_llm_messages(system: str, messages: list, max_tokens: int = 500) -> str:
+    if not settings.GROQ_API_KEY:
+        raise HTTPException(500, "GROQ_API_KEY not configured in .env file")
+        
+    headers = {
+        "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    
+    formatted_messages = [{"role": "system", "content": system}]
+    for msg in messages:
+        formatted_messages.append({
+            "role": msg.get("role", "user"),
+            "content": msg.get("content", "")
+        })
+        
+    payload = {
+        "model": "llama-3.1-8b-instant",
+        "messages": formatted_messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.2
+    }
+    
+    with httpx.Client(timeout=30.0) as client:
+        try:
+            response = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            raise HTTPException(500, f"AI generation failed: {str(e)}")
+
 @router.post("/segment")
 def nl_to_segment(data: NLSegmentRequest, db: Session = Depends(get_db)):
     """Convert natural language to SQL segment query"""
@@ -137,29 +169,258 @@ def generate_insights(data: InsightRequest):
     return {"insight": insight}
 
 @router.post("/chat")
-def ai_chat(data: dict, db: Session = Depends(get_db)):
-    """General AI chat for CRM assistance"""
+def ai_chat(data: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """General AI chat for CRM assistance with action execution capabilities"""
     message = data.get("message", "")
+    history = data.get("history", [])
     
+    if not history and message:
+        history = [{"role": "user", "content": message}]
+        
+    messages_payload = []
+    for msg in history:
+        role = msg.get("role", "user")
+        if role == "ai":
+            role = "assistant"
+        content = msg.get("content") or msg.get("text") or ""
+        messages_payload.append({
+            "role": role,
+            "content": content
+        })
+
     # Get context
-    from models import Customer, Campaign
-    from sqlalchemy import func
-    total_customers = db.query(func.count(Customer.id)).scalar()
-    total_campaigns = db.query(func.count(Campaign.id)).scalar()
+    from models import Customer, Campaign, Segment, Communication
+    from sqlalchemy import func, text
+    
+    total_customers = db.query(func.count(Customer.id)).scalar() or 0
+    total_campaigns = db.query(func.count(Campaign.id)).scalar() or 0
+    total_segments = db.query(func.count(Segment.id)).scalar() or 0
+    
+    segments = db.query(Segment).all()
+    campaigns = db.query(Campaign).all()
+    
+    segments_list = "\n".join([f"- Name: '{s.name}' (ID: '{s.id}', Customers: {s.customer_count})" for s in segments])
+    campaigns_list = "\n".join([f"- Name: '{c.name}' (ID: '{c.id}', Segment ID: '{c.segment_id}', Status: '{c.status}', Channel: '{c.channel}')" for c in campaigns])
     
     system = f"""You are an AI assistant for Xeno CRM, helping marketers reach their shoppers.
-Current data: {total_customers} customers, {total_campaigns} campaigns.
+You have access to the following SQLite database schema:
+{DB_SCHEMA}
+
+Current data in the database:
+- {total_customers} customers
+- {total_campaigns} campaigns
+- {total_segments} segments
+
+Existing segments:
+{segments_list if segments_list else "None"}
+
+Existing campaigns:
+{campaigns_list if campaigns_list else "None"}
 
 You can help with:
-- Suggesting audience segments (describe who to target)
-- Campaign strategy advice  
-- Message copy suggestions
-- Interpreting campaign performance
+1. Answering marketing questions.
+2. Generating audience segments.
+3. Creating campaigns.
+4. Sending campaigns.
 
-Be concise, practical, and marketing-focused. If the user wants to create a segment, ask them to use the Segment Builder with natural language."""
+To implement actions, you must output a JSON response. 
+Even if the user just asks a general question, return JSON with an empty action list.
+The JSON format must be EXACTLY:
+{{
+  "response": "Your text response to the user explaining what you did, or answering their question. Use markdown formatting.",
+  "actions": [
+    ...
+  ]
+}}
+
+Supported action objects:
+1. To create a new segment:
+{{
+  "type": "create_segment",
+  "name": "Segment Name",
+  "description": "Short explanation of the segment",
+  "sql_query": "SQLite query starting with SELECT DISTINCT c.id FROM customers c..."
+}}
+
+2. To create a new campaign:
+{{
+  "type": "create_campaign",
+  "name": "Campaign Name",
+  "segment_name": "Name of the existing or newly created segment in this session",
+  "message_template": "Message copy template, supports {{name}}",
+  "channel": "email|sms|whatsapp|rcs"
+}}
+
+3. To send a campaign:
+{{
+  "type": "send_campaign",
+  "campaign_name": "Name of the campaign to send"
+}}
+
+Rules for actions:
+- CRITICAL: DO NOT automatically create segments or campaigns when answering general or analytical questions (e.g., "are there any customers who might leave next week?", "how many customers from Delhi?").
+- For questions, first formulate the answer in your thoughts, write a helpful response, and then suggest if they want to create a segment for it and suggest a name for the segment (e.g., "Would you like me to create a segment for this? I suggest naming it 'At-Risk Customers'."). In this case, the "actions" array MUST be empty (`[]`).
+- ONLY when the user explicitly requests segment/campaign creation (e.g., "create a segment named...", "make a segment...", "launch campaign...") or explicitly confirms your suggestion (e.g., "yes, create it", "please do"), include the action in the "actions" list.
+- If you return an action, explain what action is being performed in your "response" text.
+- Return ONLY the JSON object. No other text, no markdown code blocks around the JSON.
+"""
+
+    response_text = call_llm_messages(system=system, messages=messages_payload, max_tokens=600)
     
-    response = call_llm(system=system, prompt=message, max_tokens=400)
-    return {"response": response}
+    # Strip markdown fences if present
+    raw = response_text.strip()
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        raw = "\n".join(lines[1:-1])
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+    
+    import json
+    try:
+        parsed = json.loads(raw)
+    except Exception as e:
+        # Fallback to plain text response if LLM failed to output JSON
+        return {"response": response_text, "actions": [], "error": f"Failed to parse JSON response: {str(e)}"}
+    
+    actions = parsed.get("actions", [])
+    response = parsed.get("response", "")
+    
+    # Track segments and campaigns created in this chat request
+    session_created_segments = {}
+    session_created_campaigns = {}
+    
+    executed_actions = []
+    
+    from datetime import datetime
+    for action in actions:
+        atype = action.get("type")
+        if atype == "create_segment":
+            name = action.get("name")
+            desc = action.get("description")
+            sql = action.get("sql_query")
+            if not name or not sql:
+                continue
+            
+            try:
+                # Validate and count
+                result = db.execute(text(sql))
+                rows = result.fetchall()
+                count = len(rows)
+                
+                # Check if exists, otherwise create
+                seg = db.query(Segment).filter(Segment.name == name).first()
+                if not seg:
+                    seg = Segment(
+                        name=name,
+                        description=desc,
+                        sql_query=sql,
+                        customer_count=count
+                    )
+                    db.add(seg)
+                    db.commit()
+                    db.refresh(seg)
+                
+                session_created_segments[name] = seg
+                executed_actions.append({"type": "create_segment", "name": name, "id": seg.id, "count": count})
+            except Exception as e:
+                db.rollback()
+                executed_actions.append({"type": "create_segment", "name": name, "error": str(e)})
+                
+        elif atype == "create_campaign":
+            name = action.get("name")
+            segment_name = action.get("segment_name")
+            msg_temp = action.get("message_template")
+            channel = action.get("channel", "email")
+            
+            if not name or not segment_name or not msg_temp:
+                continue
+            
+            # Find segment
+            seg = db.query(Segment).filter(Segment.name == segment_name).first()
+            if not seg and segment_name in session_created_segments:
+                seg = session_created_segments[segment_name]
+                
+            if not seg:
+                executed_actions.append({"type": "create_campaign", "name": name, "error": f"Segment '{segment_name}' not found."})
+                continue
+                
+            try:
+                camp = db.query(Campaign).filter(Campaign.name == name).first()
+                if not camp:
+                    camp = Campaign(
+                        name=name,
+                        segment_id=seg.id,
+                        message_template=msg_temp,
+                        channel=channel,
+                        status="draft"
+                    )
+                    db.add(camp)
+                    db.commit()
+                    db.refresh(camp)
+                
+                session_created_campaigns[name] = camp
+                executed_actions.append({"type": "create_campaign", "name": name, "id": camp.id})
+            except Exception as e:
+                db.rollback()
+                executed_actions.append({"type": "create_campaign", "name": name, "error": str(e)})
+                
+        elif atype == "send_campaign":
+            campaign_name = action.get("campaign_name")
+            if not campaign_name:
+                continue
+                
+            camp = db.query(Campaign).filter(Campaign.name == campaign_name).first()
+            if not camp and campaign_name in session_created_campaigns:
+                camp = session_created_campaigns[campaign_name]
+                
+            if not camp:
+                executed_actions.append({"type": "send_campaign", "name": campaign_name, "error": f"Campaign '{campaign_name}' not found."})
+                continue
+                
+            if camp.status == "sent":
+                executed_actions.append({"type": "send_campaign", "name": campaign_name, "error": "Campaign already sent."})
+                continue
+                
+            try:
+                # Send logic
+                seg = db.query(Segment).filter(Segment.id == camp.segment_id).first()
+                result = db.execute(text(seg.sql_query))
+                rows = result.fetchall()
+                customer_ids = [str(row[0]) for row in rows]
+                customers = db.query(Customer).filter(Customer.id.in_(customer_ids)).all()
+                
+                comms = []
+                for customer in customers:
+                    personalised_msg = camp.message_template.replace("{{name}}", customer.name)
+                    comm = Communication(
+                        campaign_id=camp.id,
+                        customer_id=customer.id,
+                        channel=camp.channel,
+                        message=personalised_msg,
+                        status="queued",
+                        sent_at=datetime.utcnow()
+                    )
+                    db.add(comm)
+                    comms.append(comm)
+                
+                camp.status = "sent"
+                camp.sent_at = datetime.utcnow()
+                db.commit()
+                
+                # Refresh to get IDs
+                comm_data = [{"id": c.id, "customer_id": c.customer_id, "message": c.message, "channel": c.channel} for c in comms]
+                
+                # Import dispatch function
+                from routers.campaigns import dispatch_to_channel
+                background_tasks.add_task(dispatch_to_channel, comm_data, camp.id)
+                
+                executed_actions.append({"type": "send_campaign", "name": campaign_name, "count": len(customers)})
+            except Exception as e:
+                db.rollback()
+                executed_actions.append({"type": "send_campaign", "name": campaign_name, "error": str(e)})
+
+    return {"response": response, "actions": executed_actions}
 
 RECOMMENDATION_SYSTEM = """You are a CRM marketing strategist AI. You will be given a list of
 customer segments with their live counts from a real database.

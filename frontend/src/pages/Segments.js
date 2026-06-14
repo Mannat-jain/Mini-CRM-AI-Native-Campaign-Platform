@@ -27,7 +27,11 @@ export default function Segments() {
     setSegments(res.data);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    window.addEventListener('crm-data-update', load);
+    return () => window.removeEventListener('crm-data-update', load);
+  }, []);
 
   const handleAI = async () => {
     if (!nlQuery.trim()) return;

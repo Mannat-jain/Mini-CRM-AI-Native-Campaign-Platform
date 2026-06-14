@@ -143,7 +143,7 @@ npm start
 1. **NL → SQL Segmentation** — Type plain English ("customers who spent ₹5000+ but haven't ordered in 60 days"), Llama 3 generates safe SELECT queries.
 2. **AI Message Drafting** — Llama 3 writes personalized copy tailored to the selected customer segment and target channel.
 3. **AI Performance Insights** — Llama 3 evaluates aggregate campaign analytics and summarizes performance.
-4. **AI Chat Assistant** — Strategy consulting chat answering query design and campaign ideas.
+4. **AI Chat Assistant** — Strategy consulting chat answering query design and campaign ideas. Now features multi-turn conversation memory, Shift+Enter multi-line input support, and interactive action-triggering capabilities (can create segments, create campaigns, and send campaigns dynamically after explicit user confirmation).
 5. **AI Campaign Recommendation Planner** — Analyzes live database counts (e.g., inactive high spenders, quiet repeat buyers, VIP opportunities) and generates contextual recommendations with automated campaign execution.
 
 ---

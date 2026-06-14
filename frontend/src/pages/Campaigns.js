@@ -52,6 +52,8 @@ export default function Campaigns() {
 
   useEffect(() => {
     load();
+    window.addEventListener('crm-data-update', load);
+    return () => window.removeEventListener('crm-data-update', load);
   }, [load]);
 
   // Poll for stats updates
