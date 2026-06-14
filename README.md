@@ -144,7 +144,7 @@ npm start
 2. **AI Message Drafting** — Llama 3 writes personalized copy tailored to the selected customer segment and target channel.
 3. **AI Performance Insights** — Llama 3 evaluates aggregate campaign analytics and summarizes performance.
 4. **AI Chat Assistant** — Strategy consulting chat answering query design and campaign ideas. Now features multi-turn conversation memory, Shift+Enter multi-line input support, and interactive action-triggering capabilities (can create segments, create campaigns, and send campaigns dynamically after explicit user confirmation).
-5. **AI Campaign Recommendation Planner** — Analyzes live database counts (e.g., inactive high spenders, quiet repeat buyers, VIP opportunities) and generates contextual recommendations with automated campaign execution.
+5. **AI Campaign Recommendation Planner** — Evaluates live database counts across an expanded pool of 9 CRM opportunities (including inactive high spenders, quiet repeat buyers, VIPs, mid-tier churn risks, and new signups) to generate contextual recommendations. Now features dynamic filtering: once a recommendation's segment is created, it is automatically filtered out and replaced by other active opportunities, reappearing only if the segment is deleted.
 
 ---
 

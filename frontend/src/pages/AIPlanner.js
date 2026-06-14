@@ -8,7 +8,11 @@ const SEGMENT_SQLS = {
   one_time_buyers: `SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING COUNT(o.id) = 1 AND MAX(o.ordered_at) < date('now', '-30 days')`,
   vip_customers: `SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING SUM(o.amount) > 20000`,
   new_customers: `SELECT DISTINCT id FROM customers WHERE created_at > date('now', '-30 days')`,
-  quiet_repeat_buyers: `SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING COUNT(o.id) >= 2 AND MAX(o.ordered_at) BETWEEN date('now', '-90 days') AND date('now', '-30 days')`
+  quiet_repeat_buyers: `SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING COUNT(o.id) >= 2 AND MAX(o.ordered_at) BETWEEN date('now', '-90 days') AND date('now', '-30 days')`,
+  churn_risk_medium: `SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING SUM(o.amount) BETWEEN 1000 AND 5000 AND c.id NOT IN (SELECT DISTINCT customer_id FROM orders WHERE ordered_at > date('now', '-30 days'))`,
+  recent_high_spenders: `SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id WHERE o.ordered_at > date('now', '-30 days') GROUP BY c.id HAVING SUM(o.amount) > 3000`,
+  quiet_vips: `SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING SUM(o.amount) > 10000 AND c.id NOT IN (SELECT DISTINCT customer_id FROM orders WHERE ordered_at > date('now', '-45 days'))`,
+  inactive_new_signups: `SELECT DISTINCT id FROM customers WHERE created_at > date('now', '-60 days') AND id NOT IN (SELECT DISTINCT customer_id FROM orders)`
 };
 
 export default function AIPlanner() {

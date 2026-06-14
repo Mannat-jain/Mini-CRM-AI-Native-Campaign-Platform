@@ -445,6 +445,23 @@ Rules:
 - Pick channel based on segment type: whatsapp/rcs for win-back & urgent, email for informational, sms for short reminders
 """
 
+def normalize_sql(sql: str) -> str:
+    if not sql:
+        return ""
+    return "".join(sql.lower().replace('"', "'").split())
+
+SEGMENT_SQL_TEMPLATES = {
+    "inactive_high_value": "SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING SUM(o.amount) > 5000 AND c.id NOT IN (SELECT DISTINCT customer_id FROM orders WHERE ordered_at > date('now', '-60 days'))",
+    "one_time_buyers": "SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING COUNT(o.id) = 1 AND MAX(o.ordered_at) < date('now', '-30 days')",
+    "vip_customers": "SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING SUM(o.amount) > 20000",
+    "new_customers": "SELECT DISTINCT id FROM customers WHERE created_at > date('now', '-30 days')",
+    "quiet_repeat_buyers": "SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING COUNT(o.id) >= 2 AND MAX(o.ordered_at) BETWEEN date('now', '-90 days') AND date('now', '-30 days')",
+    "churn_risk_medium": "SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING SUM(o.amount) BETWEEN 1000 AND 5000 AND c.id NOT IN (SELECT DISTINCT customer_id FROM orders WHERE ordered_at > date('now', '-30 days'))",
+    "recent_high_spenders": "SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id WHERE o.ordered_at > date('now', '-30 days') GROUP BY c.id HAVING SUM(o.amount) > 3000",
+    "quiet_vips": "SELECT DISTINCT c.id FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id HAVING SUM(o.amount) > 10000 AND c.id NOT IN (SELECT DISTINCT customer_id FROM orders WHERE ordered_at > date('now', '-45 days'))",
+    "inactive_new_signups": "SELECT DISTINCT id FROM customers WHERE created_at > date('now', '-60 days') AND id NOT IN (SELECT DISTINCT customer_id FROM orders)"
+}
+
 @router.get("/recommendations")
 def get_recommendations(db: Session = Depends(get_db)):
     """
@@ -452,13 +469,13 @@ def get_recommendations(db: Session = Depends(get_db)):
     recommendations. This is the data <-> AI integration point:
     the NUMBERS come from the DB, the RECOMMENDATIONS come from the LLM.
     """
-    from models import Customer, Order
+    from models import Customer, Order, Segment
     from sqlalchemy import func, text
 
     # ---- Fixed heuristic queries against real data ----
     # 1. High-value customers inactive 60+ days
     inactive_high_value = db.execute(text("""
-        SELECT COUNT(DISTINCT c.id) FROM customers c
+        SELECT DISTINCT c.id FROM customers c
         JOIN orders o ON o.customer_id = c.id
         GROUP BY c.id
         HAVING SUM(o.amount) > 5000
@@ -503,21 +520,79 @@ def get_recommendations(db: Session = Depends(get_db)):
     """)).fetchall()
     quiet_repeat_count = len(quiet_repeat_buyers)
 
+    # 6. Churn Risk (Medium Spenders)
+    churn_risk_medium = db.execute(text("""
+        SELECT c.id FROM customers c
+        JOIN orders o ON o.customer_id = c.id
+        GROUP BY c.id
+        HAVING SUM(o.amount) BETWEEN 1000 AND 5000
+        AND c.id NOT IN (
+            SELECT DISTINCT customer_id FROM orders WHERE ordered_at > date('now', '-30 days')
+        )
+    """)).fetchall()
+    churn_risk_medium_count = len(churn_risk_medium)
+
+    # 7. Recent High-Spenders
+    recent_high_spenders = db.execute(text("""
+        SELECT c.id FROM customers c
+        JOIN orders o ON o.customer_id = c.id
+        WHERE o.ordered_at > date('now', '-30 days')
+        GROUP BY c.id
+        HAVING SUM(o.amount) > 3000
+    """)).fetchall()
+    recent_high_spenders_count = len(recent_high_spenders)
+
+    # 8. Quiet VIPs
+    quiet_vips = db.execute(text("""
+        SELECT c.id FROM customers c
+        JOIN orders o ON o.customer_id = c.id
+        GROUP BY c.id
+        HAVING SUM(o.amount) > 10000
+        AND c.id NOT IN (
+            SELECT DISTINCT customer_id FROM orders WHERE ordered_at > date('now', '-45 days')
+        )
+    """)).fetchall()
+    quiet_vips_count = len(quiet_vips)
+
+    # 9. Inactive New Signups
+    inactive_new_signups = db.execute(text("""
+        SELECT id FROM customers
+        WHERE created_at > date('now', '-60 days')
+        AND id NOT IN (SELECT DISTINCT customer_id FROM orders)
+    """)).fetchall()
+    inactive_new_signups_count = len(inactive_new_signups)
+
+    # Filter out recommendations that already have segments in the database
+    existing_segments = db.query(Segment).all()
+    existing_sqls_norm = {normalize_sql(s.sql_query) for s in existing_segments if s.sql_query}
+
     segment_counts = {
         "inactive_high_value": inactive_high_value_count,
         "one_time_buyers": one_time_buyers_count,
         "vip_customers": vip_count,
         "new_customers": new_customers_count,
         "quiet_repeat_buyers": quiet_repeat_count,
+        "churn_risk_medium": churn_risk_medium_count,
+        "recent_high_spenders": recent_high_spenders_count,
+        "quiet_vips": quiet_vips_count,
+        "inactive_new_signups": inactive_new_signups_count,
     }
 
-    # If everything is zero (empty DB), return empty list — frontend handles this
-    if all(v == 0 for v in segment_counts.values()):
+    filtered_segment_counts = {}
+    for key, count in segment_counts.items():
+        template_sql = SEGMENT_SQL_TEMPLATES.get(key)
+        if template_sql and normalize_sql(template_sql) in existing_sqls_norm:
+            # Segment already created, do not recommend
+            continue
+        filtered_segment_counts[key] = count
+
+    # If everything is zero or all recommendations are already created/empty, return empty list
+    if all(v == 0 for v in filtered_segment_counts.values()):
         return {"recommendations": []}
 
     # ---- Ask the LLM to turn real numbers into recommendations ----
     prompt = "Segment counts from live database:\n" + "\n".join(
-        f"- {k}: {v} customers" for k, v in segment_counts.items() if v > 0
+        f"- {k}: {v} customers" for k, v in filtered_segment_counts.items() if v > 0
     )
 
     try:
@@ -536,7 +611,7 @@ def get_recommendations(db: Session = Depends(get_db)):
 
         # Attach the real count back onto each recommendation
         for rec in parsed:
-            rec["count"] = segment_counts.get(rec.get("segment_key"), 0)
+            rec["count"] = filtered_segment_counts.get(rec.get("segment_key"), 0)
 
         # Sort: high urgency first, then by count descending
         urgency_order = {"high": 0, "medium": 1, "low": 2}
@@ -546,9 +621,8 @@ def get_recommendations(db: Session = Depends(get_db)):
 
     except Exception:
         # ---- Fallback: deterministic recommendations, no LLM needed ----
-        # Keeps the panel useful even if GROQ_API_KEY is missing/rate-limited
         fallback = []
-        if inactive_high_value_count > 0:
+        if "inactive_high_value" in filtered_segment_counts and inactive_high_value_count > 0:
             fallback.append({
                 "segment_key": "inactive_high_value",
                 "title": "Win back high-value customers",
@@ -557,7 +631,7 @@ def get_recommendations(db: Session = Depends(get_db)):
                 "urgency": "high",
                 "count": inactive_high_value_count,
             })
-        if one_time_buyers_count > 0:
+        if "one_time_buyers" in filtered_segment_counts and one_time_buyers_count > 0:
             fallback.append({
                 "segment_key": "one_time_buyers",
                 "title": "Convert one-time buyers",
@@ -566,7 +640,7 @@ def get_recommendations(db: Session = Depends(get_db)):
                 "urgency": "medium",
                 "count": one_time_buyers_count,
             })
-        if vip_count > 0:
+        if "vip_customers" in filtered_segment_counts and vip_count > 0:
             fallback.append({
                 "segment_key": "vip_customers",
                 "title": "Reward your VIP customers",
@@ -575,7 +649,7 @@ def get_recommendations(db: Session = Depends(get_db)):
                 "urgency": "medium",
                 "count": vip_count,
             })
-        if quiet_repeat_count > 0:
+        if "quiet_repeat_buyers" in filtered_segment_counts and quiet_repeat_count > 0:
             fallback.append({
                 "segment_key": "quiet_repeat_buyers",
                 "title": "Re-engage repeat buyers going quiet",
@@ -584,7 +658,7 @@ def get_recommendations(db: Session = Depends(get_db)):
                 "urgency": "medium",
                 "count": quiet_repeat_count,
             })
-        if new_customers_count > 0:
+        if "new_customers" in filtered_segment_counts and new_customers_count > 0:
             fallback.append({
                 "segment_key": "new_customers",
                 "title": "Welcome new customers",
@@ -592,6 +666,42 @@ def get_recommendations(db: Session = Depends(get_db)):
                 "suggested_channel": "email",
                 "urgency": "low",
                 "count": new_customers_count,
+            })
+        if "churn_risk_medium" in filtered_segment_counts and churn_risk_medium_count > 0:
+            fallback.append({
+                "segment_key": "churn_risk_medium",
+                "title": "Win Back Mid-Tier Churn Risks",
+                "reasoning": f"{churn_risk_medium_count} mid-tier customers spent ₹1,000-5,000 but inactive for 30+ days.",
+                "suggested_channel": "email",
+                "urgency": "medium",
+                "count": churn_risk_medium_count,
+            })
+        if "recent_high_spenders" in filtered_segment_counts and recent_high_spenders_count > 0:
+            fallback.append({
+                "segment_key": "recent_high_spenders",
+                "title": "Nurture Recent High Spenders",
+                "reasoning": f"{recent_high_spenders_count} customers spent over ₹3,000 in the last 30 days — capitalize on their activity.",
+                "suggested_channel": "whatsapp",
+                "urgency": "high",
+                "count": recent_high_spenders_count,
+            })
+        if "quiet_vips" in filtered_segment_counts and quiet_vips_count > 0:
+            fallback.append({
+                "segment_key": "quiet_vips",
+                "title": "Re-engage Quiet VIPs",
+                "reasoning": f"{quiet_vips_count} high-spending VIPs (₹10,000+ total) haven't ordered in 45 days.",
+                "suggested_channel": "whatsapp",
+                "urgency": "high",
+                "count": quiet_vips_count,
+            })
+        if "inactive_new_signups" in filtered_segment_counts and inactive_new_signups_count > 0:
+            fallback.append({
+                "segment_key": "inactive_new_signups",
+                "title": "Convert Inactive New Signups",
+                "reasoning": f"{inactive_new_signups_count} users registered in the last 60 days but have never placed an order.",
+                "suggested_channel": "email",
+                "urgency": "low",
+                "count": inactive_new_signups_count,
             })
 
         return {"recommendations": fallback}
