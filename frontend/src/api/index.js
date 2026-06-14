@@ -49,6 +49,7 @@ export const segmentsAPI = {
   list: () => API.get('/api/segments/'),
   create: (data) => API.post('/api/segments/', data),
   preview: (sql) => API.post('/api/segments/preview', { sql_query: sql }),
+  delete: (id) => API.delete(`/api/segments/${id}`),
 };
 
 export const campaignsAPI = {
